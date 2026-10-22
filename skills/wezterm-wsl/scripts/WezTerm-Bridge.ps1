@@ -126,6 +126,15 @@ function Get-JobResult([string] $Id, [int] $Checks) {
     }
     if ($out.text) { $result.stdout = $out.text }
     if ($err.text) { $result.stderr = $err.text }
+    if ($complete -and $record.PSObject.Properties['kind'] -and $record.kind -eq 'file' -and -not $record.result_delivered) {
+        $resultPath = Join-Path $dir 'result.json'
+        if ([IO.File]::Exists($resultPath)) {
+            $result.result = Get-Content -LiteralPath $resultPath -Raw | ConvertFrom-Json
+            $record.result_delivered = $true
+            $result.Remove('stdout')
+            $result.Remove('stderr')
+        }
+    }
     if ($out.truncated -or $err.truncated) {
         $result.truncated = $true
         $result.full_output_directory = $dir
@@ -208,18 +217,36 @@ command mv -- __DIR__/done.tmp __DIR__/done
             if ($binding.job -and -not (Test-JobDone (Get-JobDirectory $binding.job))) {
                 throw "Job $($binding.job) is unfinished. Use Wait or Read; a second command was not sent."
             }
-            if ($script:InvocationParameters.ContainsKey('Text') -eq $script:InvocationParameters.ContainsKey('TextFile')) { throw 'Run requires exactly one of Text and TextFile.' }
-            $command = if ($TextFile) { [IO.File]::ReadAllText((Resolve-Path -LiteralPath $TextFile).Path, $script:Utf8) } else { $Text }
-            if ([string]::IsNullOrWhiteSpace($command)) { throw 'Command is empty.' }
+            $inputCount = @('Text', 'TextFile', 'RequestFile' | Where-Object { $script:InvocationParameters.ContainsKey($_) }).Count
+            if ($inputCount -ne 1) { throw 'Run requires exactly one of Text, TextFile, and RequestFile.' }
+            $kind = if ($RequestFile) { 'file' } else { 'shell' }
+            if ($RequestFile) {
+                $requestText = [IO.File]::ReadAllText((Resolve-Path -LiteralPath $RequestFile).Path, $script:Utf8)
+                $request = $requestText | ConvertFrom-Json -AsHashtable
+                if ($request -isnot [System.Collections.IDictionary] -or $request.op -notin @('ls', 'read', 'write', 'edit', 'mv')) { throw 'RequestFile requires a file operation: ls, read, write, edit, or mv.' }
+            }
+            else {
+                $command = if ($TextFile) { [IO.File]::ReadAllText((Resolve-Path -LiteralPath $TextFile).Path, $script:Utf8) } else { $Text }
+                if ([string]::IsNullOrWhiteSpace($command)) { throw 'Command is empty.' }
+            }
             $id = [guid]::NewGuid().ToString('N').Substring(0, 12)
             $dir = Get-JobDirectory $id
             [void] [IO.Directory]::CreateDirectory($dir)
             $linuxDir = "$($binding.linux_root)/jobs/$id"
+            if ($kind -eq 'file') {
+                Write-BridgeText (Join-Path $dir 'request.json') $requestText
+                [IO.File]::Copy((Join-Path $PSScriptRoot 'wsl-files.py'), (Join-Path $dir 'files.py'))
+                $command = 'python3 ' + (Quote-Bash "$linuxDir/files.py") + ' ' + (Quote-Bash "$linuxDir/request.json") + ' ' + (Quote-Bash "$linuxDir/result.json")
+            }
+            if ($Cwd) {
+                $quotedCwd = if ($Cwd -eq '~') { '"$HOME"' } elseif ($Cwd.StartsWith('~/')) { '"$HOME"/' + (Quote-Bash $Cwd.Substring(2)) } else { Quote-Bash $Cwd }
+                $command = 'if builtin cd -- ' + $quotedCwd + "; then`n" + $command + "`nelse`n  false`nfi"
+            }
             Write-BridgeText (Join-Path $dir 'command.sh') ($command.Replace("`r`n", "`n") + "`n")
             $driver = [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'run-driver.bash'))
             $driver = $driver.Replace('__DIR__', (Quote-Bash $linuxDir)).Replace('__EXPECTED_PID__', $binding.shell_pid).Replace('__VAR__', "__cwz_$id")
             Write-BridgeText (Join-Path $dir 'run.sh') ($driver.Replace("`r`n", "`n"))
-            $record = [pscustomobject]@{ session = $Session; delivery = 'attempting'; stdout_offset = 0L; stderr_offset = 0L }
+            $record = [pscustomobject]@{ session = $Session; delivery = 'attempting'; stdout_offset = 0L; stderr_offset = 0L; kind = $kind; result_delivered = $false }
             Write-BridgeJson (Join-Path $dir 'job.json') $record
             $binding.job = $id
             Write-BridgeJson $script:SessionFile $binding

@@ -8,7 +8,7 @@ Practical agent skills from my everyday workflows. Each skill lives in its own d
 
 | Skill | Purpose | Requirements |
 | --- | --- | --- |
-| [wezterm-wsl](skills/wezterm-wsl/SKILL.md) | Operate persistent WSL shells from Windows through WezTerm, with compact output and completion notifications. | Windows, PowerShell 7+, WezTerm, WSL with Bash and `tee` |
+| [wezterm-wsl](skills/wezterm-wsl/SKILL.md) | Operate persistent WSL shells from Windows through WezTerm, with compact output and completion notifications. | Windows, PowerShell 7+, WezTerm, WSL with Bash/coreutils; Python 3 for file operations |
 
 `wezterm-wsl` intentionally becomes the default workflow for WSL operations when available to the agent, even if you do not explicitly name it. Explicit user choices take precedence. General WSL questions do not open a terminal, and Windows-side WSL management can use the appropriate Windows tools.
 
@@ -44,6 +44,22 @@ codex plugin add devries-skills@devries-skills
 
 Start a new session to load the installed skills. Marketplace support depends on your Codex version and surface; the individual skill installation remains an alternative. This is a repository marketplace, not a listing in the OpenAI public plugin directory. See the [official plugin documentation](https://developers.openai.com/plugins/build/plugins).
 
+## Short command and file API
+
+After attaching a WezTerm session as described in the [skill instructions](skills/wezterm-wsl/SKILL.md), run the installed `scripts/wsl.ps1 init` once to create a task-local `work/wsl.ps1` launcher. It keeps the session binding without changing your PATH or shell profile.
+
+```powershell
+& .\work\wsl.ps1 exec 'git status --short' -Cwd /home/user/project
+& .\work\wsl.ps1 cd /home/user/project
+& .\work\wsl.ps1 ls -All
+& .\work\wsl.ps1 read src/app.py -From 1 -Lines 80
+& .\work\wsl.ps1 write notes.txt -Content 'Hello'
+& .\work\wsl.ps1 edit notes.txt -Old 'Hello' -New 'Hello world'
+& .\work\wsl.ps1 mv notes.txt -To archive/notes.txt -Parents
+```
+
+`exec` still supports arbitrary noninteractive Bash commands. The file operations run directly in WSL, preserve existing Linux modes and consistent CRLF formatting, and return bounded readable results. `write` and `mv` refuse overwrite by default; `edit` checks unique matches. Supply `-ExpectedHash` from `read` to reject stale edits. Use `-Json` when consuming results in code. See the [file API reference](skills/wezterm-wsl/references/files.md) for details.
+
 ## How wezterm-wsl works
 
 The Windows PowerShell helper attaches to a chosen idle Bash prompt in WezTerm. Commands run in that same shell, preserving working directory, variables, and functions. Normal runs return compact JSON with the exit code, current directory, and separate stdout/stderr while keeping output visible in the terminal.
@@ -71,6 +87,16 @@ skills/
   another-skill/
     SKILL.md
 ```
+
+## Validation
+
+Run the file-operation tests inside Linux/WSL:
+
+```bash
+python3 -m unittest discover -s tests -v
+```
+
+The Windows integration test requires PowerShell 7, WezTerm, and an already attached session. From a Windows checkout, run `tests/test_bridge.ps1 -Entry PATH_TO_INSTALLED_SCRIPTS/wsl.ps1`, using the same `-StateRoot` as Attach. It tests real transport, shell state, file operations, and incremental waits in an isolated temporary WSL directory.
 
 ## License
 

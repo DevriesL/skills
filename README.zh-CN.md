@@ -8,7 +8,7 @@
 
 | Skill | 用途 | 环境要求 |
 | --- | --- | --- |
-| [wezterm-wsl](skills/wezterm-wsl/SKILL.md) | 在 Windows 上通过 WezTerm 操作持久化 WSL Shell，返回精简结果，并通过完成通知减少轮询。 | Windows、PowerShell 7+、WezTerm、带 Bash 和 `tee` 的 WSL |
+| [wezterm-wsl](skills/wezterm-wsl/SKILL.md) | 在 Windows 上通过 WezTerm 操作持久化 WSL Shell，返回精简结果，并通过完成通知减少轮询。 | Windows、PowerShell 7+、WezTerm、带 Bash/coreutils 的 WSL；文件操作需要 Python 3 |
 
 `wezterm-wsl` 保留了一个明确约定：当 Agent 可以使用它时，**涉及 WSL 的实际操作默认使用这套工作流，无需每次点名**。用户明确指定其它方式时，以用户要求为准。单纯回答 WSL 问题不会打开终端；需要在 Windows 侧管理 WSL 时，可以使用相应的 Windows 工具。
 
@@ -44,6 +44,22 @@ codex plugin add devries-skills@devries-skills
 
 安装后开始新会话。Marketplace 支持情况取决于 Codex 版本和使用入口，也可以选择单独安装 skill。这是仓库提供的市场源，并不代表已上架 OpenAI 公共插件目录。参见[官方插件文档](https://developers.openai.com/plugins/build/plugins)。
 
+## 简短的命令与文件接口
+
+按 [skill 说明](skills/wezterm-wsl/SKILL.md) 绑定 WezTerm 会话后，运行已安装的 `scripts/wsl.ps1 init`，生成当前任务的 `work/wsl.ps1` 短启动器。它会记住会话绑定，无需修改 PATH 或 Shell 配置。
+
+```powershell
+& .\work\wsl.ps1 exec 'git status --short' -Cwd /home/user/project
+& .\work\wsl.ps1 cd /home/user/project
+& .\work\wsl.ps1 ls -All
+& .\work\wsl.ps1 read src/app.py -From 1 -Lines 80
+& .\work\wsl.ps1 write notes.txt -Content 'Hello'
+& .\work\wsl.ps1 edit notes.txt -Old 'Hello' -New 'Hello world'
+& .\work\wsl.ps1 mv notes.txt -To archive/notes.txt -Parents
+```
+
+`exec` 继续支持任意非交互 Bash 命令。文件接口直接在 WSL 中操作，保留已有 Linux 权限和一致的 CRLF 换行格式，并返回有长度限制的可读结果。`write`、`mv` 默认拒绝覆盖，`edit` 默认要求唯一匹配；使用 `read` 返回的 `-ExpectedHash` 可以拒绝基于旧内容的修改。程序消费结果时可加 `-Json`。完整参数见[文件 API 参考](skills/wezterm-wsl/references/files.md)。
+
 ## wezterm-wsl 如何工作
 
 Windows PowerShell helper 绑定 WezTerm 中选定的空闲 Bash 提示符。命令在同一个 Shell 中运行，因此工作目录、变量和函数可以延续。普通命令返回精简 JSON，包含退出码、当前目录、标准输出和错误输出；用户仍能在终端看到输出。
@@ -71,6 +87,16 @@ skills/
   another-skill/
     SKILL.md
 ```
+
+## 验证
+
+在 Linux/WSL 中运行文件操作测试：
+
+```bash
+python3 -m unittest discover -s tests -v
+```
+
+Windows 端到端测试需要 PowerShell 7、WezTerm 和已绑定的会话。从 Windows 检出目录运行 `tests/test_bridge.ps1 -Entry 已安装的scripts/wsl.ps1路径`，并使用与 Attach 相同的 `-StateRoot`。测试会在隔离的 WSL 临时目录中验证实际传输、Shell 状态、文件操作和增量等待。
 
 ## 许可证
 

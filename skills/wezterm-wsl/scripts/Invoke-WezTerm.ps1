@@ -7,6 +7,8 @@ param(
     [int] $PaneId = -1,
     [string] $Text,
     [string] $TextFile,
+    [string] $RequestFile,
+    [string] $Cwd,
     [switch] $Enter,
     [ValidateSet('Enter', 'CtrlC', 'CtrlD', 'Escape')]
     [string] $Key,
