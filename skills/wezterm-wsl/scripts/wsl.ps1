@@ -2,11 +2,15 @@
 [CmdletBinding()]
 param(
     [Parameter(Position = 0)]
-    [ValidateSet('exec', 'cd', 'ls', 'read', 'write', 'edit', 'mv', 'wait', 'init')]
+    [ValidateSet('exec', 'cd', 'ls', 'read', 'write', 'edit', 'mv', 'grep', 'glob', 'wait', 'init')]
     [string] $Op = 'exec',
     [Parameter(Position = 1)]
     [string] $Target,
     [string] $To,
+    [string] $Root = '.',
+    [string[]] $Glob,
+    [switch] $Literal,
+    [switch] $IgnoreCase,
     [AllowEmptyString()][string] $Content,
     [AllowEmptyString()][string] $Old,
     [AllowEmptyString()][string] $New,
@@ -95,8 +99,18 @@ try {
         $arguments.Text = 'builtin cd -- ' + (Quote-ShellPath $Target)
     }
     else {
-        if (-not $Target -and $Op -ne 'ls') { throw "$Op requires a path." }
+        if (-not $Target -and $Op -ne 'ls') { throw "$Op requires a path (grep/glob require a pattern)." }
         $request = [ordered]@{ op = $Op; path = $(if ($Target) { $Target } else { '.' }) }
+        if ($Op -in @('grep', 'glob')) {
+            $request.path = $Root
+            $request.pattern = $Target
+            $request.limit = $Limit
+            $request.max_chars = $MaxChars
+            $request.all = [bool] $All
+            if ($Glob) { $request.glob = @($Glob) }
+            if ($Literal) { $request.literal = $true }
+            if ($IgnoreCase) { $request.ignore_case = $true }
+        }
         switch ($Op) {
             'ls' { $request.limit = $Limit; $request.max_chars = $MaxChars; $request.all = [bool] $All }
             'read' { $request.from = $From; $request.lines = $Lines; $request.max_chars = $MaxChars }
@@ -159,6 +173,17 @@ if ($result.ContainsKey('result')) {
                     Write-Output ($entry.name + $suffix)
                 }
                 if ($file.omitted) { Write-Output "[$($file.omitted) entries omitted; increase -Limit]" }
+            }
+            { $_ -in @('grep', 'glob') } {
+                Write-Output $file.path
+                if ($file.op -eq 'grep') {
+                    foreach ($match in $file.matches) { Write-Output "$($match.path):$($match.line): $($match.text)" }
+                    if (-not $file.matches.Count) { Write-Output '[no matches returned]' }
+                } else {
+                    foreach ($path in $file.paths) { Write-Output $path }
+                    if (-not $file.paths.Count) { Write-Output '[no paths returned]' }
+                }
+                if ($file.truncated) { Write-Output '[search stopped at limit; narrow the query or increase -Limit/-MaxChars]' }
             }
             'mv' { Write-Output "$($file.path) -> $($file.to)" }
             default {

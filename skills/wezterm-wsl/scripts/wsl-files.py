@@ -1,8 +1,10 @@
 """Bounded UTF-8 file operations inside WSL; invoked by the WezTerm bridge."""
+import base64
 import hashlib
 import json
 import os
 from pathlib import Path
+import shutil
 import stat
 import subprocess
 import sys
@@ -109,14 +111,137 @@ def replace_text(path, data, original=None, info=None):
             os.unlink(temporary)
 
 
+
+def search_records(stream, separator):
+    # Bound even a single huge matching line or malformed child output.
+    pending = b""
+    while chunk := stream.read1(8192):
+        pending += chunk
+        while separator in pending:
+            record, pending = pending.split(separator, 1)
+            if len(record) > MAX_BYTES:
+                raise FileError("search_record_too_large", "Search record exceeds 8 MiB; narrow the search or use exec")
+            yield record
+        if len(pending) > MAX_BYTES:
+            raise FileError("search_record_too_large", "Search record exceeds 8 MiB; narrow the search or use exec")
+    if pending:
+        yield pending
+
+
+def rg_text(value):
+    if "text" in value:
+        return value["text"]
+    return base64.b64decode(value["bytes"]).decode("utf-8", errors="replace")
+
+
+def search(request, path):
+    operation = request["op"]
+    pattern = text_arg(request, "pattern")
+    if not pattern or "\0" in pattern or "\n" in pattern or "\r" in pattern:
+        raise FileError("invalid_request", "pattern must be nonempty and single-line, without NUL")
+    limit = bounded_int(request, "limit", 100, 1, 1000)
+    maximum = bounded_int(request, "max_chars", 4000, 128, 100000)
+    globs = request.get("glob", [])
+    if isinstance(globs, str):
+        globs = [globs]
+    if not isinstance(globs, list) or any(not isinstance(g, str) or not g or "\0" in g for g in globs):
+        raise FileError("invalid_request", "glob must be a nonempty string or an array of nonempty strings")
+    if not path.exists():
+        raise FileError("not_found", f"Search path does not exist: {path}")
+    directory = path.is_dir()
+    if not directory and (operation == "glob" or not path.is_file()):
+        raise FileError("invalid_request", "glob requires a directory; grep requires a directory or regular file")
+    executable = shutil.which("rg")
+    if not executable:
+        local = Path.home() / ".local/bin/rg"
+        if local.is_file() and os.access(local, os.X_OK):
+            executable = str(local)
+    if not executable:
+        raise FileError("missing_dependency", "grep/glob require ripgrep (rg) in WSL, on PATH or at ~/.local/bin/rg")
+    # Ignore user rg config so machine-specific formatting/filters cannot break
+    # the protocol. Sorting makes the bounded first page reproducible.
+    command = [executable, "--no-config", "--color", "never", "--sort", "path"]
+    if request.get("all"):
+        command += ["--hidden", "--no-ignore"]
+    if operation == "glob":
+        command += ["--files", "--null", "--glob", pattern]
+    else:
+        command += ["--json", "--line-number"]
+        if request.get("literal"):
+            command.append("--fixed-strings")
+        if request.get("ignore_case"):
+            command.append("--ignore-case")
+        command += ["--regexp", pattern]
+    for glob in globs:
+        command += ["--glob", glob]
+    command += ["--glob", "!.git", "--", "." if directory else "./" + path.name]
+    items, used, truncated = [], 0, False
+    with tempfile.TemporaryFile() as errors:
+        process = subprocess.Popen(command, cwd=path if directory else path.parent,
+                                   stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=errors)
+        try:
+            for record in search_records(process.stdout, b"\0" if operation == "glob" else b"\n"):
+                if operation == "grep":
+                    event = json.loads(record)
+                    if event["type"] != "match":
+                        continue
+                    data = event["data"]
+                    name = rg_text(data["path"])
+                    name = name[2:] if name.startswith("./") else name
+                    line = data["line_number"]
+                    content = rg_text(data["lines"]).rstrip("\r\n")
+                    available = maximum - used - len(name) - len(str(line)) - 4
+                    if available < 1:
+                        truncated = True
+                        break
+                    preview = content[:available]
+                    item = {"path": name, "line": line, "text": preview}
+                    if len(preview) < len(content):
+                        item["text_truncated"] = True
+                        truncated = True
+                    used += len(name) + len(str(line)) + len(preview) + 4
+                else:
+                    name = record.decode("utf-8", errors="replace")
+                    name = name[2:] if name.startswith("./") else name
+                    if used + len(name) + 1 > maximum:
+                        truncated = True
+                        break
+                    item = name
+                    used += len(name) + 1
+                items.append(item)
+                if len(items) >= limit or used >= maximum or truncated:
+                    truncated = True
+                    break
+            if truncated and process.poll() is None:
+                process.terminate()
+            try:
+                code = process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                code = process.wait()
+            errors.seek(0)
+            error = errors.read(4096).decode("utf-8", errors="replace").strip()
+            if error or (not truncated and code not in (0, 1)):
+                raise FileError("search_failed", error or f"ripgrep exited with {code}")
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.wait()
+            process.stdout.close()
+    return {"op": operation, "path": str(path), "pattern": pattern,
+            "matches" if operation == "grep" else "paths": items, "truncated": truncated}
+
+
 def execute(request):
     if not isinstance(request, dict):
         raise FileError("invalid_request", "Request must be an object")
-    for key in ("all", "overwrite", "parents"):
+    for key in ("all", "overwrite", "parents", "literal", "ignore_case"):
         if key in request and type(request[key]) is not bool:
             raise FileError("invalid_request", f"{key} must be a boolean")
     operation = request.get("op")
     path = path_arg(request)
+    if operation in ("grep", "glob"):
+        return search(request, path)
     if operation == "ls":
         limit = bounded_int(request, "limit", 100, 1, 1000)
         maximum = bounded_int(request, "max_chars", 4000, 128, 100000)

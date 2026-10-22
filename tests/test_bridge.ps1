@@ -38,6 +38,22 @@ try {
     Assert-That ($moved.result.ok) 'mv failed'
     $listed = Invoke-TestWsl @{ Op = 'ls'; Limit = 1 }
     Assert-That ($listed.result.entries.Count -eq 1 -and $listed.result.omitted -eq 1) 'ls limits failed'
+    $search = Invoke-TestWsl @{ Op = 'grep'; Target = 'UPDATED'; Root = $scratch; IgnoreCase = $true; Glob = @('*.txt'); Metrics = $true }
+    Assert-That ($search.result.matches.Count -eq 1 -and $search.result.matches[0].line -eq 1 -and $search.result.matches[0].text -eq 'updated') 'grep content, flags, or line number failed'
+    Assert-That ($search.metrics.wezterm_cli_calls -eq 1 -and $search.metrics.terminal_captures -eq 0) 'search added terminal polling'
+    $paths = Invoke-TestWsl @{ Op = 'glob'; Target = '**/*.txt'; Root = $scratch }
+    Assert-That ($paths.result.paths.Count -eq 1 -and $paths.result.paths[0] -eq 'renamed.txt') 'glob paths failed'
+    $noMatches = Invoke-TestWsl @{ Op = 'grep'; Target = 'MISSING'; Literal = $true }
+    Assert-That ($noMatches.exit_code -eq 0 -and $noMatches.result.matches.Count -eq 0) 'empty search was reported as failure'
+    $invalidRegex = Invoke-TestWsl @{ Op = 'grep'; Target = '[' }
+    Assert-That ($invalidRegex.exit_code -ne 0 -and $invalidRegex.result.error.code -eq 'search_failed') 'invalid regex was accepted'
+    $bounded = Invoke-TestWsl @{ Op = 'glob'; Target = '*'; Limit = 1 }
+    Assert-That ($bounded.result.paths.Count -eq 1 -and $bounded.result.truncated) 'search bounds failed'
+    $searchPending = Invoke-TestWsl @{ Op = 'grep'; Target = 'updated'; WaitSeconds = 0 }
+    $searchDone = if ($searchPending.status -eq 'done') { $searchPending } else { Invoke-TestWsl @{ Op = 'wait'; Target = $searchPending.job; WaitSeconds = 5; Metrics = $true } }
+    Assert-That ($searchDone.result.matches.Count -eq 1) 'search result was lost across Wait'
+    $searchAgain = Invoke-TestWsl @{ Op = 'wait'; Target = $searchDone.job; Metrics = $true }
+    Assert-That (-not $searchAgain.ContainsKey('result') -and $searchAgain.metrics.wezterm_cli_calls -eq 0) 'search Wait replayed results or used terminal calls'
     $failure = Invoke-TestWsl @{ Op = 'exec'; Target = 'printf SHOULD_NOT_RUN'; Cwd = "$scratch/absent" }
     Assert-That ($failure.exit_code -ne 0 -and -not $failure.ContainsKey('stdout')) 'command ran after failed cd'
     [void] (Invoke-TestWsl @{ Op = 'exec'; Target = "__wez_files_test='persistent'"; Cwd = $scratch })
@@ -58,7 +74,7 @@ try {
     Assert-That ($fileDone.result.ok -and $fileDone.result.content.StartsWith('updated')) 'structured result was lost across Wait'
     $fileAgain = Invoke-TestWsl @{ Op = 'wait'; Target = $fileDone.job }
     Assert-That (-not $fileAgain.ContainsKey('result')) 'Wait replayed structured result'
-    Write-Output 'Bridge integration checks passed: all seven operations, Unicode paths, hash conflicts, persistent state, guarded cwd, bounded output, overlap rejection, and incremental Wait.'
+    Write-Output 'Bridge integration checks passed: all nine operations, grep/glob search, Unicode paths, hash conflicts, persistent state, guarded cwd, bounded output, overlap rejection, and incremental Wait.'
 }
 finally {
     [void] (Invoke-TestWsl @{ Op = 'exec'; Target = 'unset __wez_files_test'; Cwd = $original; WaitSeconds = 5 })

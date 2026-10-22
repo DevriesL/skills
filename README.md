@@ -8,7 +8,7 @@ Practical agent skills from my everyday workflows. Each skill lives in its own d
 
 | Skill | Purpose | Requirements |
 | --- | --- | --- |
-| [wezterm-wsl](skills/wezterm-wsl/SKILL.md) | Operate persistent WSL shells from Windows through WezTerm, with compact output and completion notifications. | Windows, PowerShell 7+, WezTerm, WSL with Bash/coreutils; Python 3 for file operations |
+| [wezterm-wsl](skills/wezterm-wsl/SKILL.md) | Operate persistent WSL shells from Windows through WezTerm, with compact output and completion notifications. | Windows, PowerShell 7+, WezTerm, WSL with Bash/coreutils; Python 3 for file operations; ripgrep for grep/glob |
 
 `wezterm-wsl` intentionally becomes the default workflow for WSL operations when available to the agent, even if you do not explicitly name it. Explicit user choices take precedence. General WSL questions do not open a terminal, and Windows-side WSL management can use the appropriate Windows tools.
 
@@ -52,11 +52,15 @@ After attaching a WezTerm session as described in the [skill instructions](skill
 & .\work\wsl.ps1 exec 'git status --short' -Cwd /home/user/project
 & .\work\wsl.ps1 cd /home/user/project
 & .\work\wsl.ps1 ls -All
+& .\work\wsl.ps1 glob '**/*.py' -Root src
+& .\work\wsl.ps1 grep 'TODO|FIXME' -Root src -Glob '*.py' -Limit 30
 & .\work\wsl.ps1 read src/app.py -From 1 -Lines 80
 & .\work\wsl.ps1 write notes.txt -Content 'Hello'
 & .\work\wsl.ps1 edit notes.txt -Old 'Hello' -New 'Hello world'
 & .\work\wsl.ps1 mv notes.txt -To archive/notes.txt -Parents
 ```
+
+`grep` searches contents and returns paths, line numbers, and matching text; `glob` finds files. Both stop at the requested result/character limit and use ripgrep in WSL (`rg` on PATH or at `~/.local/bin/rg`). `-Root` scopes the search, `-Glob` filters files, and grep supports `-Literal`/`-IgnoreCase`. See the [search reference](skills/wezterm-wsl/references/files.md#searching) for ignore rules and explicit glob behavior.
 
 `exec` still supports arbitrary noninteractive Bash commands. The file operations run directly in WSL, preserve existing Linux modes and consistent CRLF formatting, and return bounded readable results. `write` and `mv` refuse overwrite by default; `edit` checks unique matches. Supply `-ExpectedHash` from `read` to reject stale edits. Use `-Json` when consuming results in code. See the [file API reference](skills/wezterm-wsl/references/files.md) for details.
 

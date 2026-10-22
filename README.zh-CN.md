@@ -8,7 +8,7 @@
 
 | Skill | 用途 | 环境要求 |
 | --- | --- | --- |
-| [wezterm-wsl](skills/wezterm-wsl/SKILL.md) | 在 Windows 上通过 WezTerm 操作持久化 WSL Shell，返回精简结果，并通过完成通知减少轮询。 | Windows、PowerShell 7+、WezTerm、带 Bash/coreutils 的 WSL；文件操作需要 Python 3 |
+| [wezterm-wsl](skills/wezterm-wsl/SKILL.md) | 在 Windows 上通过 WezTerm 操作持久化 WSL Shell，返回精简结果，并通过完成通知减少轮询。 | Windows、PowerShell 7+、WezTerm、带 Bash/coreutils 的 WSL；文件操作需要 Python 3，grep/glob 需要 ripgrep |
 
 `wezterm-wsl` 保留了一个明确约定：当 Agent 可以使用它时，**涉及 WSL 的实际操作默认使用这套工作流，无需每次点名**。用户明确指定其它方式时，以用户要求为准。单纯回答 WSL 问题不会打开终端；需要在 Windows 侧管理 WSL 时，可以使用相应的 Windows 工具。
 
@@ -52,11 +52,15 @@ codex plugin add devries-skills@devries-skills
 & .\work\wsl.ps1 exec 'git status --short' -Cwd /home/user/project
 & .\work\wsl.ps1 cd /home/user/project
 & .\work\wsl.ps1 ls -All
+& .\work\wsl.ps1 glob '**/*.py' -Root src
+& .\work\wsl.ps1 grep 'TODO|FIXME' -Root src -Glob '*.py' -Limit 30
 & .\work\wsl.ps1 read src/app.py -From 1 -Lines 80
 & .\work\wsl.ps1 write notes.txt -Content 'Hello'
 & .\work\wsl.ps1 edit notes.txt -Old 'Hello' -New 'Hello world'
 & .\work\wsl.ps1 mv notes.txt -To archive/notes.txt -Parents
 ```
+
+`grep` 搜索文件内容，返回路径、行号和匹配文本；`glob` 按模式查找文件。两者达到条数或字符上限就停止搜索，使用 WSL 中的 ripgrep（PATH 上的 `rg` 或 `~/.local/bin/rg`）。`-Root` 指定搜索范围，`-Glob` 过滤文件；grep 支持 `-Literal` 字面量和 `-IgnoreCase` 忽略大小写。忽略规则和显式 glob 的行为见[搜索参考](skills/wezterm-wsl/references/files.md#searching)。
 
 `exec` 继续支持任意非交互 Bash 命令。文件接口直接在 WSL 中操作，保留已有 Linux 权限和一致的 CRLF 换行格式，并返回有长度限制的可读结果。`write`、`mv` 默认拒绝覆盖，`edit` 默认要求唯一匹配；使用 `read` 返回的 `-ExpectedHash` 可以拒绝基于旧内容的修改。程序消费结果时可加 `-Json`。完整参数见[文件 API 参考](skills/wezterm-wsl/references/files.md)。
 

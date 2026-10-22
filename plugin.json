@@ -1,6 +1,6 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "devries-skills",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Practical agent skills from DevriesL's everyday workflows, including persistent WSL control through WezTerm."
 }

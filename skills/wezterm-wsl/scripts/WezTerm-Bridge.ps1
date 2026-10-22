@@ -223,7 +223,7 @@ command mv -- __DIR__/done.tmp __DIR__/done
             if ($RequestFile) {
                 $requestText = [IO.File]::ReadAllText((Resolve-Path -LiteralPath $RequestFile).Path, $script:Utf8)
                 $request = $requestText | ConvertFrom-Json -AsHashtable
-                if ($request -isnot [System.Collections.IDictionary] -or $request.op -notin @('ls', 'read', 'write', 'edit', 'mv')) { throw 'RequestFile requires a file operation: ls, read, write, edit, or mv.' }
+                if ($request -isnot [System.Collections.IDictionary] -or $request.op -notin @('ls', 'read', 'write', 'edit', 'mv', 'grep', 'glob')) { throw 'RequestFile requires a file operation: ls, read, write, edit, mv, grep, or glob.' }
             }
             else {
                 $command = if ($TextFile) { [IO.File]::ReadAllText((Resolve-Path -LiteralPath $TextFile).Path, $script:Utf8) } else { $Text }
