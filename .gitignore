@@ -1,0 +1,13 @@
+# Helper runtime state, command text, and logs
+work/
+
+# Local environment and editor files
+.env
+.env.*
+!.env.example
+.venv/
+__pycache__/
+*.pyc
+node_modules/
+.DS_Store
+Thumbs.db

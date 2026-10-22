@@ -1,0 +1,4 @@
+interface:
+  display_name: "WezTerm WSL"
+  short_description: "Run WSL commands with compact results and fewer polls"
+  default_prompt: "Use $wezterm-wsl to operate my WSL shell through a persistent WezTerm pane."
